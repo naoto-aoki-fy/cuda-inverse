@@ -32,7 +32,7 @@ __global__ void invert25(const double* __restrict__ A_in,
         // 2.1 ピボット選択（共有メモリ上で列 k の最大値行を探す）
         double maxVal = 0.0;
         int    maxRow = k;
-        double val    = fabs(A[col][k]);         // 各スレッドは自行の値を持つ
+        double val    = (col >= k) ? fabs(A[col][k]) : 0.0; // pivot search only for rows >= k
         // warp-wide reduce (BLOCK ≤ 32 のため単一 warp で完結)
         #pragma unroll
         for (int offset = 16; offset > 0; offset >>= 1) {
