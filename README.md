@@ -1,0 +1,1 @@
+# compute inverse matrix using LU decomposition and OpenMP
