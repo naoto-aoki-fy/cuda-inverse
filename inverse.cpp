@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <vector>   // ← main 用
+#include <omp.h>
 
 /* 手書き swap（テンプレートを避ける） */
 inline void swap_int (int&    a, int&    b) { int    t = a; a = b; b = t; }
@@ -82,15 +83,23 @@ void invert(const double* A,
     lu_decompose_seq(LU, piv, n);
 
     /* 2. n 本の方程式を解く（列ごとに単位ベクトル） */
-    // #pragma omp parallel for schedule(static)
-    for (int col = 0; col < n; ++col) {
-        for (int i = 0; i < n; ++i) b[i] = 0.0;
-        b[col] = 1.0;
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        double* b_loc = b + tid * n;
+        double* y_loc = y + tid * n;
+        double* x_loc = x + tid * n;
 
-        lu_solve(LU, piv, b, y, x, n);
+        #pragma omp for schedule(static)
+        for (int col = 0; col < n; ++col) {
+            for (int i = 0; i < n; ++i) b_loc[i] = 0.0;
+            b_loc[col] = 1.0;
 
-        for (int row = 0; row < n; ++row)
-            Ainv[row * n + col] = x[row];
+            lu_solve(LU, piv, b_loc, y_loc, x_loc, n);
+
+            for (int row = 0; row < n; ++row)
+                Ainv[row * n + col] = x_loc[row];
+        }
     }
 }
 
@@ -98,13 +107,14 @@ void invert(const double* A,
 int main()
 {
     const int n = 25;
+    const int threads = omp_get_max_threads();
 
     /* main だけで STL を使用して領域確保 */
     std::vector<double> A   (n * n);
     std::vector<double> LU  (n * n);
     std::vector<double> Ainv(n * n);
     std::vector<int   > piv (n);
-    std::vector<double> b(n), y(n), x(n);
+    std::vector<double> b(threads * n), y(threads * n), x(threads * n);
 
     /* テスト行列生成（乱数） */
     std::srand(1234567);
