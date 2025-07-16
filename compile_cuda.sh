@@ -7,7 +7,7 @@ SM_VER=61 # GTX1060
 SOURCE=inverse.cpp
 EXEFN=main_cuda.exe
 
-OPTARG=(-O3 -Xcompiler=-fopenmp -std=c++17 --cudart=shared -x cu)
+OPTARG=(-O3 -Xcompiler=-fopenmp -std=c++17 --cudart=shared -x cu -I./atlc/include)
 
 if [[ "${SOURCE}" -nt "${EXEFN}" ]]; then
 

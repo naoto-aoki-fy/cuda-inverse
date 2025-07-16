@@ -1,0 +1,3 @@
+[submodule "atlc"]
+	path = atlc
+	url = https://github.com/naoto-aoki-fy/atlc.git
