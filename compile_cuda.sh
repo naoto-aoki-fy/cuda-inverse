@@ -7,7 +7,7 @@ SM_VER=61 # GTX1060
 SOURCE=inverse_002.cu
 EXEFN=main.exe
 
-OPTARG=(-O3 -std=c++17 --cudart=shared -lcurand)
+OPTARG=(-O3 -Xcompiler=-fopenmp -std=c++17 --cudart=shared)
 
 if [[ "${SOURCE}" -nt "${EXEFN}" ]]; then
 
