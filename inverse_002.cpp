@@ -66,6 +66,7 @@ DEVICE_HOST void lu_decompose_seq(uint64_t thread_num, uint64_t num_threads, dou
                 A[i * n + j] -= Lik * A[k * n + j];
         // }
         }
+        sync_cuda_omp();
     }
 }
 
@@ -247,7 +248,7 @@ int main()
 
     /* main だけで STL を使用して領域確保 */
     std::vector<double> A(n * n);
-    std::vector<double> LU(n * n);
+    std::vector<double> LU;
     std::vector<double> Ainv(n * n);
     std::vector<int> piv(n);
     std::vector<double> b(num_threads * n);
@@ -259,11 +260,14 @@ int main()
     for (double& v : A) {
         v = ( -1.0 + 2.0 * (std::rand() / static_cast<double>(RAND_MAX)) );
     }
+    LU = A;
 
     double Akk;
     #pragma omp parallel
     {
         invert_omp(A.data(), Ainv.data(), LU.data(), piv.data(), b.data(), y.data(), x.data(), &Akk, n);
+
+        #pragma omp barrier
     }
 
     /* Frobenius 誤差 ||I - A·A⁻¹||_F */
