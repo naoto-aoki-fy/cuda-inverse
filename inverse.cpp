@@ -196,119 +196,92 @@ void invert_omp
     invert(thread_num, num_threads, A, Ainv, LU, piv, b, y, x, pAkk, is_singular, n);
 }
 
-#ifdef __CUDACC__
 int main()
 {
     const int n = 60;
-    int block_size = 32;
-    // const int threads = omp_get_max_threads();
 
-    /* main だけで STL を使用して領域確保 */
-    std::vector<double> A(n * n);
-    std::vector<double> LU(n * n);
+#ifdef __CUDACC__
+    const int num_threads = 32; // GPU 固有
+#else
+    const int num_threads = omp_get_max_threads(); // CPU 固有
+#endif
+
+    /* ─ 乱数行列生成（共通） ─ */
+    std::vector<double> A (n * n);
     std::vector<double> Ainv(n * n);
-
-    /* テスト行列生成（乱数） */
     std::srand(1234);
     for (double& v : A) {
-        v = ( -1.0 + 2.0 * (std::rand() / static_cast<double>(RAND_MAX)) );
+        v = -1.0 + 2.0 * (std::rand() / static_cast<double>(RAND_MAX));
     }
 
-    double* A_device;
-    ATLC_CHECK_CUDA(cudaMalloc, &A_device, n * n * sizeof(double));
-    ATLC_CHECK_CUDA(cudaMemcpyAsync, A_device, A.data(), n * n * sizeof(double), cudaMemcpyHostToDevice, 0);
+/* -----------------------------------------------------------------
+   CUDA でビルドされている場合
+   ----------------------------------------------------------------- */
+#ifdef __CUDACC__
 
+    /* GPU 用メモリ確保・転送 */
+    double *A_d, *LU_d, *Ainv_d, *b_d, *y_d, *x_d;
+    int* piv_d;
+    bool* is_singular_d;
+    bool is_singular;
 
-    double* LU_device;
-    ATLC_CHECK_CUDA(cudaMallocAsync, &LU_device, n * n * sizeof(double), 0);
-    double* Ainv_device;
-    ATLC_CHECK_CUDA(cudaMallocAsync, &Ainv_device, n * n * sizeof(double), 0);
-    int* piv_device;
-    ATLC_CHECK_CUDA(cudaMallocAsync, &piv_device, n * sizeof(int), 0);
-    double* b_device;
-    ATLC_CHECK_CUDA(cudaMallocAsync, &b_device, block_size * n * sizeof(double), 0);
-    double* y_device;
-    ATLC_CHECK_CUDA(cudaMallocAsync, &y_device, block_size * n * sizeof(double), 0);
-    double* x_device;
-    ATLC_CHECK_CUDA(cudaMallocAsync, &x_device, block_size * n * sizeof(double), 0);
+    ATLC_CHECK_CUDA(cudaMalloc, &A_d, n * n * sizeof(double));
+    ATLC_CHECK_CUDA(cudaMemcpyAsync, A_d, A.data(), n * n * sizeof(double), cudaMemcpyHostToDevice, 0);
 
-    bool* is_singular_device;
-    ATLC_CHECK_CUDA(cudaMallocAsync, &is_singular_device, sizeof(bool), 0);
-    bool is_singular_host[1];
+    ATLC_CHECK_CUDA(cudaMallocAsync, &LU_d, n * n * sizeof(double), 0);
+    ATLC_CHECK_CUDA(cudaMallocAsync, &Ainv_d, n * n * sizeof(double), 0);
+    ATLC_CHECK_CUDA(cudaMallocAsync, &piv_d, n * sizeof(int), 0);
+    ATLC_CHECK_CUDA(cudaMallocAsync, &b_d, num_threads * n * sizeof(double), 0);
+    ATLC_CHECK_CUDA(cudaMallocAsync, &y_d, num_threads * n * sizeof(double), 0);
+    ATLC_CHECK_CUDA(cudaMallocAsync, &x_d, num_threads * n * sizeof(double), 0);
+    ATLC_CHECK_CUDA(cudaMallocAsync, &is_singular_d, sizeof(bool), 0);
 
-    /* 逆行列計算 */
+    /* LU = A をデバイス側でコピー */
+    ATLC_CHECK_CUDA(cudaMemcpyAsync, LU_d, A_d, n * n * sizeof(double), cudaMemcpyDeviceToDevice);
 
-    ATLC_CHECK_CUDA(cudaMemcpyAsync, LU_device, A_device, n * n * sizeof(double), cudaMemcpyDeviceToDevice);
+    /* 逆行列計算カーネル呼び出し */
+    ATLC_CHECK_CUDA(atlc::cudaLaunchKernel, invert_cuda, 1, num_threads, 0, 0, A_d, Ainv_d, LU_d, piv_d, b_d, y_d, x_d, is_singular_d, n);
 
-    ATLC_CHECK_CUDA(atlc::cudaLaunchKernel, invert_cuda, 1, block_size, 0, 0, A_device, Ainv_device, LU_device, piv_device, b_device, y_device, x_device, is_singular_device, n);
-
-    ATLC_CHECK_CUDA(cudaMemcpyAsync, is_singular_host, is_singular_device, sizeof(bool), cudaMemcpyDeviceToHost, 0);
-
-    ATLC_CHECK_CUDA(cudaMemcpyAsync, Ainv.data(), Ainv_device, n * n * sizeof(double), cudaMemcpyDeviceToHost, 0);
-
+    /* 結果の取り出し */
+    ATLC_CHECK_CUDA(cudaMemcpyAsync, &is_singular, is_singular_d, sizeof(bool), cudaMemcpyDeviceToHost, 0);
+    ATLC_CHECK_CUDA(cudaMemcpyAsync, Ainv.data(), Ainv_d, n * n * sizeof(double), cudaMemcpyDeviceToHost, 0);
     ATLC_CHECK_CUDA(cudaStreamSynchronize, 0);
 
-    if (*is_singular_host) {
-        fprintf(stderr, "Singular\n");
-        std::exit(EXIT_FAILURE);
-    }
+/* -----------------------------------------------------------------
+   OpenMP でビルドされている場合
+   ----------------------------------------------------------------- */
+#else // !__CUDACC__
 
-    /* Frobenius 誤差 ||I - A·A⁻¹||_F */
-    double err2 = 0.0;
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            double s = 0.0;
-            for (int k = 0; k < n; ++k)
-                s += A[i * n + k] * Ainv[k * n + j];
-            double diff = s - (i == j ? 1.0 : 0.0);
-            err2 += diff * diff;
-        }
-    }
-    std::printf("Frobenius error = %.3e\n", std::sqrt(err2));
-    return 0;
-}
-#else
-int main()
-{
-    const int n = 60;
-    int const num_threads = omp_get_max_threads();
-
-    /* main だけで STL を使用して領域確保 */
-    std::vector<double> A(n * n);
-    std::vector<double> LU;
-    std::vector<double> Ainv(n * n);
-    std::vector<int> piv(n);
-    std::vector<double> b(num_threads * n);
-    std::vector<double> y(num_threads * n);
-    std::vector<double> x(num_threads * n);
-
-    /* テスト行列生成（乱数） */
-    std::srand(1234);
-    for (double& v : A) {
-        v = ( -1.0 + 2.0 * (std::rand() / static_cast<double>(RAND_MAX)) );
-    }
-    LU = A;
-
+    std::vector<double> LU  = A; // LU 分解用
+    std::vector<int> piv (n);
+    std::vector<double> b (num_threads * n);
+    std::vector<double> y (num_threads * n);
+    std::vector<double> x (num_threads * n);
     double Akk;
-    bool is_singular[1];
-    *is_singular = false;
-    #pragma omp parallel
+    bool is_singular = false;
+
+#pragma omp parallel
     {
         if (num_threads != omp_get_num_threads()) {
-            fprintf(stderr, "omp_get_num_threads != omp_get_max_threads\n");
-            throw std::runtime_error("omp_get_num_threads != omp_get_max_threads");
+            std::fprintf(stderr, "omp_get_num_threads != omp_get_max_threads\n");
+            std::exit(EXIT_FAILURE);
         }
-        uint64_t thread_num = omp_get_thread_num();
-        invert_omp(thread_num, num_threads, A.data(), Ainv.data(), LU.data(), piv.data(), b.data(), y.data(), x.data(), &Akk, is_singular, n);
-    }
-    if (*is_singular) {
-        fprintf(stderr, "Singular\n");
-        std::exit(EXIT_FAILURE);
+        std::uint64_t tid = omp_get_thread_num();
+        invert_omp(tid, num_threads, A.data(), Ainv.data(), LU.data(), piv.data(), b.data(), y.data(), x.data(), &Akk, &is_singular, n);
     }
 
-    /* Frobenius 誤差 ||I - A·A⁻¹||_F */
+#endif  /* __CUDACC__ / else */
+
+    if (is_singular) {
+        std::fprintf(stderr, "Singular\n");
+        return EXIT_FAILURE;
+    }
+
+/* ────────────────────
+   Frobenius 誤差（共通）
+   ──────────────────── */
     double err2 = 0.0;
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < n; ++i)
         for (int j = 0; j < n; ++j) {
             double s = 0.0;
             for (int k = 0; k < n; ++k)
@@ -316,8 +289,6 @@ int main()
             double diff = s - (i == j ? 1.0 : 0.0);
             err2 += diff * diff;
         }
-    }
     std::printf("Frobenius error = %.3e\n", std::sqrt(err2));
     return 0;
 }
-#endif
