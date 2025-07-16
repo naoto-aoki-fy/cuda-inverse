@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SOURCE=inverse_002.cpp
+SOURCE=inverse.cpp
 EXEFN=main_omp.exe
 
 OPTARG=(-O3 -fopenmp -std=c++17 )
