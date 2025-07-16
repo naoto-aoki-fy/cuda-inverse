@@ -1,1 +1,0 @@
-inverse_002.cpp

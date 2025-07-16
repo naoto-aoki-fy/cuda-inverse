@@ -4,10 +4,10 @@ SM_VER=61 # GTX1060
 # SM_VER=80 # A100
 # SM_VER=90 # H100
 
-SOURCE=inverse_002.cu
-EXEFN=main.exe
+SOURCE=inverse_002.cpp
+EXEFN=main_cuda.exe
 
-OPTARG=(-O3 -Xcompiler=-fopenmp -std=c++17 --cudart=shared)
+OPTARG=(-O3 -Xcompiler=-fopenmp -std=c++17 --cudart=shared -x cu)
 
 if [[ "${SOURCE}" -nt "${EXEFN}" ]]; then
 
